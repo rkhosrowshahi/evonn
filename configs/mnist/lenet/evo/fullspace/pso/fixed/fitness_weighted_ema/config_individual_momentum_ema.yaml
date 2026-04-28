@@ -1,0 +1,32 @@
+script: src/evo/evo_trainer_individual_momentum_ema.py
+arch: lenet
+dataset: mnist
+num_fe: 2500000
+batch_size: 256
+criterion: ce
+adapter: full
+optimizer: pso
+pso_w: 0.5
+pso_c1: 2.0
+pso_c2: 2.0
+pso_initial_velocity: random
+pso_max_velocity_rate: 0.20
+# pso_pertube_best: false
+# pso_adaptive: false
+seed: 42
+alpha: 1.0
+pop_init: lhs
+pop_init_lb: -0.1
+pop_init_ub: 0.1
+pop_size: 50
+num_iterations: 50000
+l2_reg_wd: 1e-3
+test_interval: 10
+fitness_ema_beta: 0.9
+save_path: logs/mnist/lenet/evo/fullspace/pso/fixed/fitness_individual_momentum_ema/beta_0.5_0.9/seed_42
+wandb_entity: rasa_research
+wandb_project: evonn
+wandb_group: lenet-mnist-fullspace-pso-fixed-fitness_individual_momentum_ema-beta_0.5_0.9
+wandb_name: lenet-mnist-fullspace-pso-fixed-fitness_individual_momentum_ema-beta_0.5_0.9-seed_42
+disable_wandb: true
+note: LeNet on MNIST with full space PSO with fixed PSO parameters
