@@ -4,15 +4,12 @@ import random
 import sys
 from typing import Dict, List, Literal, Optional, Tuple
 import numpy as np
-import optax
 from sklearn.decomposition import PCA
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
-from matplotlib import pyplot as plt
-import scienceplots
 from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
 from torch.optim.lr_scheduler import _LRScheduler
@@ -45,6 +42,25 @@ def save_model(model: nn.Module, name: str, wandb_run=None) -> None:
         artifact = wandb.Artifact(name, type='model')
         artifact.add_file(save_path)
         wandb_run.log_artifact(artifact)
+
+def log_checkpoint_wandb(
+    ckpt_path: str,
+    *,
+    artifact_name: str = "best",
+    artifact_type: str = "checkpoint",
+    metadata: dict | None = None,
+) -> None:
+    """Register an on-disk checkpoint with the current wandb run as a versioned artifact.
+
+    No-op if there is no active run, or the file is missing. Mirrors :func:`save_model` artifact use.
+    """
+    if not os.path.isfile(ckpt_path):
+        return
+    if wandb.run is None:
+        return
+    art = wandb.Artifact(artifact_name, type=artifact_type, metadata=metadata or {})
+    art.add_file(ckpt_path, name="best.pt")
+    wandb.log_artifact(art)
 
 def load_model(name: str) -> Dict:
     """Load a saved model.
@@ -173,6 +189,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
     """
     dataset = args.dataset
     batch_size = args.batch_size
+    test_batch_size = batch_size
     if dataset == 'cifar100':
         num_classes = 100
         stats = ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
@@ -189,7 +206,6 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
         ])
         dataset_class = torchvision.datasets.CIFAR100
         input_size = 32
-        
     elif dataset == 'cifar10':
         num_classes = 10
         stats = ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
@@ -215,6 +231,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
         dataset_class = torchvision.datasets.MNIST
         transform_train = transform_test = transform
         input_size = 28
+        test_batch_size = 10000
     elif dataset == 'fashion':
         num_classes = 10
         transform = transforms.Compose([
@@ -224,6 +241,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
         dataset_class = torchvision.datasets.FashionMNIST
         transform_train = transform_test = transform
         input_size = 28
+        test_batch_size = 10000
     else:
         raise ValueError(f"Dataset {dataset} not supported")
 
@@ -239,7 +257,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
         val_dataset = Subset(train_dataset, val_indices)
         val_loader = DataLoader(
             val_dataset,
-            batch_size=batch_size,
+            batch_size=test_batch_size,
             shuffle=False,
             pin_memory=False,
         )
@@ -249,11 +267,18 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
     # Create data loaders
     train_loader = None
     
+    dataloader_gen: Optional[torch.Generator] = None
+    s = getattr(args, "seed", None)
+    if s is not None:
+        dataloader_gen = torch.Generator()
+        dataloader_gen.manual_seed(int(s))
+
     if args.sampler is None:
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
+            generator=dataloader_gen,
             pin_memory=False,
             num_workers=0
         )
@@ -280,6 +305,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
                 train_dataset,
                 batch_size=batch_size,
                 shuffle=True,
+                generator=dataloader_gen,
                 pin_memory=False,
                 num_workers=0
             )
@@ -288,7 +314,7 @@ def create_dataset(args) -> Tuple[Subset, Subset, Subset, int, int]:
    
     test_loader = DataLoader(
         test_dataset,
-        batch_size=batch_size,
+        batch_size=test_batch_size,
         shuffle=False,
         pin_memory=False,
     )
@@ -427,7 +453,7 @@ def evaluate_model_on_test(
     acc5 = top5.avg
     f1 = f1_score(y_true=torch.tensor(all_targets).cpu().numpy(), y_pred=torch.tensor(all_predictions).cpu().numpy(), average='macro')
     
-    return ce_loss.avg, acc1, acc5, f1
+    return {"loss": ce_loss.avg, "top1": acc1, "top5": acc5, "f1": f1}
 
 def evaluate_model_acc(
     model: nn.Module,
@@ -1253,23 +1279,6 @@ def accuracy(input: torch.Tensor, target: torch.Tensor, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def plot_convergence(acc_tracker: Dict[int, float], save_path: str) -> None:
-    """Plot convergence curve of accuracy over iterations.
-    
-    Args:
-        acc_tracker: Dictionary mapping iteration to accuracy
-        save_path: Directory to save plot
-    """
-    with plt.style.context(['science', 'no-latex']):
-        plt.figure(figsize=(10, 5))
-        plt.plot(list(acc_tracker.keys()), list(acc_tracker.values()))
-        plt.xlabel('Iteration')
-        plt.ylabel('Accuracy ($\\%$)')
-        plt.title('Convergence')
-        plt.grid(True)
-    plt.savefig(f'{save_path}/convergence.pdf')
-    plt.close()
-
 # --------------------- Parameter Management Functions ---------------------
 
 def get_param_shapes(model: nn.Module) -> List[torch.Size]:
@@ -1344,383 +1353,6 @@ def unfreeze_bn(model: nn.Module) -> None:
         if "bn" in name:
             param.requires_grad = True
 
-
-
-def distribution_based_strategy_init(key: jax.random.PRNGKey, strategy: str, x0: np.ndarray, steps: int, args: argparse.Namespace) -> None:
-    std_init = args.es_std
-    print(f"Total number of steps: {steps}")
-            
-    if strategy == 'CMA_ES':
-        alpha = 1
-        d = len(x0)
-        base = 4 + np.floor(3 * np.log(max(1, d)))
-        popsize = max(2, int(np.ceil(alpha * base)))
-        args.popsize = popsize
-        es = distribution_based_algorithms[strategy](
-            population_size=popsize, 
-            solution=x0,
-        )
-        es_params = es.default_params.replace(
-            std_init=std_init,
-            std_min=1e-6, 
-            std_max=1e3
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'Sep_CMA_ES':
-        alpha = 1
-        d = len(x0)
-        base = 4 + np.floor(3 * np.log(max(1, d)))
-        popsize = max(2, int(np.ceil(alpha * base)))
-        args.popsize = popsize
-        es = distribution_based_algorithms[strategy](
-            population_size=popsize, 
-            solution=x0,
-        )
-        es_params = es.default_params.replace(
-            std_init=std_init,
-            std_min=1e-6, 
-            std_max=1e3
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'SV_CMA_ES':
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize//5, 
-            num_populations=5,
-            solution=x0,
-        )
-        es_params = es.default_params.replace(std_init=std_init, std_min=1e-6, std_max=1e1)
-        means = np.random.normal(x0, 0, (5, x0.shape[0]))
-        es_state = es.init(key=key, means=means, params=es_params)
-    elif strategy == 'SimpleES':
-        lr_schedule = optax.piecewise_constant_schedule(
-            init_value=args.es_lr,
-            boundaries_and_scales={
-                steps // 160: args.es_lr,  # multiply by 0.1 at step 160
-                steps // 180: args.es_lr,  # multiply by 0.1 again at step 180
-            }
-        )
-        optimizer = None
-        if args.es_optimizer == 'sgd':
-            optimizer = optax.sgd(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adam':
-            optimizer = optax.adam(learning_rate=lr_schedule)
-        else:
-            raise ValueError(f"Invalid optimizer: {args.es_optimizer}")
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0,
-            optimizer=optax.sgd(learning_rate=lr_schedule),
-        )
-        es_params = es.default_params.replace(
-            std_init=std_init,
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'Open_ES':
-        # For SGD optimizer
-        # lr_schedule = optax.cosine_decay_schedule(
-        #     init_value=1e-3,
-        #     decay_steps=steps,
-        #     alpha=1e-2,
-        # )
-        # lr_schedule = optax.piecewise_constant_schedule(
-        #     init_value=args.es_lr,
-        #     boundaries_and_scales={
-        #         steps // 160: 0.1,  # multiply by 0.1 at step 160
-        #         steps // 180: 0.1,  # multiply by 0.1 again at step 180
-        #     }
-        # )
-        
-        # lr_schedule = optax.piecewise_constant_schedule(
-        #     init_value=args.es_lr,
-        #     boundaries_and_scales={
-        #         steps // 160: args.es_lr,  # multiply by 0.1 at step 160
-        #         steps // 180: args.es_lr,  # multiply by 0.1 again at step 180
-        #     }
-        # )
-        lr_schedule = optax.constant_schedule(args.es_lr)
-        std_schedule = optax.cosine_decay_schedule(
-            init_value=std_init,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        optimizer = None
-        if args.es_optimizer == 'sgd':
-            lr_schedule = optax.cosine_decay_schedule(
-                init_value=args.es_lr,
-                decay_steps=steps,
-                alpha=1e-6,
-            )
-            optimizer = optax.sgd(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adam':
-            print(f"Using Adam optimizer with learning rate: {args.es_lr}")
-            lr_schedule = optax.piecewise_constant_schedule(
-                init_value=args.es_lr,
-                boundaries_and_scales={
-                    int(steps * 0.5): 0.1,  # multiply by 0.1 at step 160
-                    int(steps * 0.8): 0.1,  # multiply by 0.1 again at step 180
-                }
-            )
-            print(f"Piecewise constant schedule with steps {steps} at {int(steps * 0.5)}, {lr_schedule(int(steps * 0.5))} and {int(steps * 0.8)}, {lr_schedule(int(steps * 0.8))}")
-            optimizer = optax.adam(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adamw':
-            optimizer = optax.adamw(learning_rate=lr_schedule, weight_decay=args.wd)
-        else:
-            raise ValueError(f"Invalid optimizer: {args.es_optimizer}")
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0,
-            optimizer=optimizer,
-            std_schedule=std_schedule,
-            use_antithetic_sampling=False,
-        )
-        es_params = es.default_params
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'SV_Open_ES':
-        # For SGD optimizer
-        lr_schedule = optax.cosine_decay_schedule(
-            init_value=1e-3,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        lr_schedule = optax.piecewise_constant_schedule(
-            init_value=args.es_lr,
-            boundaries_and_scales={
-                steps // 160: args.es_lr,  # multiply by 0.1 at step 160
-                steps // 180: args.es_lr,  # multiply by 0.1 again at step 180
-            }
-        )
-        std_schedule = optax.cosine_decay_schedule(
-            init_value=std_init,
-            decay_steps=steps,
-            alpha=0.0,
-        )
-        optimizer = None
-        if args.es_optimizer == 'sgd':
-            optimizer = optax.sgd(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adam':
-            optimizer = optax.adam(learning_rate=lr_schedule)
-        else:
-            raise ValueError(f"Invalid optimizer: {args.es_optimizer}")
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize//5, 
-            num_populations=5,
-            solution=x0,
-            optimizer=optimizer,
-            std_schedule=std_schedule,
-            use_antithetic_sampling=True,
-        )
-        es_params = es.default_params
-        es_state = es.init(key=key, means=np.random.normal(x0, 0.1, (5, x0.shape[0])), params=es_params)
-    elif strategy == 'xNES':
-        # For SGD optimizer
-        lr_schedule = optax.cosine_decay_schedule(
-            init_value=1e-3,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        lr_schedule = optax.piecewise_constant_schedule(
-            init_value=args.es_lr,
-            boundaries_and_scales={
-                steps // 160: 0.1,  # multiply by 0.1 at step 160
-                steps // 180: 0.1,  # multiply by 0.1 again at step 180
-            }
-        )
-        optimizer = None
-        if args.es_optimizer == 'sgd':
-            optimizer = optax.sgd(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adam':
-            optimizer = optax.adam(learning_rate=lr_schedule)
-        else:
-            raise ValueError(f"Invalid optimizer: {args.es_optimizer}")
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0,
-            optimizer=optimizer,
-        )
-        es_params = es.default_params
-        es_params = es_params.replace(
-            std_init=std_init,
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-
-    elif strategy == 'EvoTF_ES':
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0
-        )
-        es_params = es.default_params
-        es_params = es_params.replace(
-            std_init=std_init,
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'LES':
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0
-        )
-        es_params = es.default_params
-        es_params = es_params.replace(
-            std_init=std_init,
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'PGPE':
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0
-        )
-        es_params = es.default_params
-        es_params = es_params.replace(
-            std_init=std_init,
-        )
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'iAMaLGaM_Full':
-        std_schedule = optax.cosine_decay_schedule(
-            init_value=args.es_std,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        args.popsize = int(np.floor(10 * np.power(len(x0), 0.5)))
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0,
-            std_schedule=std_schedule,
-        )
-        es_params = es.default_params
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    elif strategy == 'NoiseReuseES':
-        std_schedule = optax.cosine_decay_schedule(
-            init_value=args.es_std,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        lr_schedule = optax.piecewise_constant_schedule(
-            init_value=args.es_lr,
-            boundaries_and_scales={
-                steps // 160: 0.1,  # multiply by 0.1 at step 160
-                steps // 180: 0.1,  # multiply by 0.1 again at step 180
-            }
-        )
-        if args.es_optimizer == 'sgd':
-            optimizer = optax.sgd(learning_rate=lr_schedule)
-        elif args.es_optimizer == 'adam':
-            optimizer = optax.adam(learning_rate=lr_schedule)
-        es = distribution_based_algorithms[strategy](
-            population_size=args.popsize, 
-            solution=x0,
-            std_schedule=std_schedule,
-            optimizer=optimizer,
-        )
-        es_params = es.default_params
-        es_state = es.init(key=key, mean=x0, params=es_params)
-    print(f"ES parameters: {es_params}")
-    return es, es_params, es_state
-
-
-def population_based_strategy_init(strategy: str, args: argparse.Namespace, x0: np.ndarray, steps: int) -> None:
-    if strategy == 'DE':
-        es = population_based_algorithms['DifferentialEvolution'](
-            population_size=args.popsize, 
-            solution=x0,
-            num_diff=1,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params.replace(
-            elitism=False,
-            differential_weight=args.de_mr,
-            crossover_rate=args.de_cr,
-        )
-    elif strategy == 'PSO':
-        es = population_based_algorithms['PSO'](
-            population_size=args.popsize, 
-            solution=x0,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params.replace(
-            inertia_coeff=args.pso_w,           # Balanced exploration/exploitation
-            cognitive_coeff=args.pso_c1,         # Enhanced personal learning
-            social_coeff=args.pso_c2,          # Enhanced global learning
-        )
-    elif strategy == 'DiffusionEvolution':
-        es = population_based_algorithms['DiffusionEvolution'](
-            population_size=args.popsize, 
-            solution=x0,
-            num_generations=steps,
-            num_latent_dims=128,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params
-    elif strategy == 'GA':
-        std_schedule = optax.cosine_decay_schedule(
-            init_value=args.ga_std,
-            decay_steps=steps,
-            alpha=1e-2,
-        )
-        es = population_based_algorithms['SimpleGA'](
-            population_size=args.popsize, 
-            solution=x0,
-            std_schedule=std_schedule,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params.replace(
-            crossover_rate=args.ga_cr,
-        )
-    elif strategy == 'LGA':
-        es = population_based_algorithms['LGA'](
-            population_size=args.popsize, 
-            solution=x0,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params.replace(
-            crossover_rate=args.ga_cr,
-            std_init=1.0,
-        )
-    elif strategy == 'GESMR_GA':
-        es = population_based_algorithms['GESMR_GA'](
-            population_size=args.popsize, 
-            solution=x0,
-            num_groups=2,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params
-    elif strategy == 'MR15_GA':
-        es = population_based_algorithms['MR15_GA'](
-            population_size=args.popsize, 
-            solution=x0,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params
-    elif strategy == 'SAMR_GA':
-        es = population_based_algorithms['SAMR_GA'](
-            population_size=args.popsize, 
-            solution=x0,
-            # fitness_shaping_fn=centered_rank_fitness_shaping_fn,
-        )
-        es_params = es.default_params
-    return es, es_params
-
-
-STRATEGY_TYPES = {
-    'cma_es': 'ES',
-    'sep_cma_es': 'ES',
-    'sv_cma_es': 'ES',
-    'simplees': 'ES',
-    'open_es': 'ES',
-    'sv_open_es': 'ES',
-    'xnes': 'ES',
-    'de': 'EA',
-    'pso': 'EA',
-    'diffusionevolution': 'EA',
-    'ga': 'EA',
-    'lga': 'EA',
-    'gesmr_ga': 'EA',
-    'mr15_ga': 'EA',
-    'samr_ga': 'EA',
-    'evotf_es': 'ES',
-    'les': 'ES',
-    'pgpe': 'ES',
-    'iamalgam_full': 'ES',
-    'noisereusees': 'ES',
-}
 
 
 def fitness(z, model, base_params, decoder, batch, loss_fn, device, alpha):
@@ -1954,7 +1586,7 @@ def create_criterion(args, num_classes):
     if criterion_type == 'ce':
         if args.label_smoothing is None:
             args.label_smoothing = 0.0
-        criterion = torch.nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+        criterion = lambda input, target: F.cross_entropy(input, target, label_smoothing=args.label_smoothing).item()
         
     elif criterion_type == 'f1':
         criterion = f1_loss
@@ -2060,15 +1692,15 @@ def evaluate_solution_on_batch(z, ws, criterion, batch, weight_decay=0, device='
     return fitness
 
 
-def evaluate_population_on_batch(population, ws, criterion, batch, train_loader=None, weight_decay=0, device='cuda'):
+def evaluate_population_on_batch(population, adapter, criterion, batch, train_loader=None, weight_decay=0, device='cuda'):
     fitnesses = np.zeros(len(population))
     for i, z in enumerate(population):
         if train_loader is not None:
             batch = next(iter(train_loader))
         try:
-            load_solution_to_model(z, ws, device)
+            load_solution_to_model(z, adapter, device)
             fitnesses[i] = evaluate_model_on_batch(model=ws.model, criterion=criterion, batch=batch, device=device)
-            theta = params_to_vector(ws.model.parameters(), to_numpy=True)
+            theta = params_to_vector(adapter.model.parameters(), to_numpy=True)
             theta_norm = np.linalg.norm(theta)
             fitnesses[i] = fitnesses[i] + weight_decay * theta_norm
         except RuntimeError as e:

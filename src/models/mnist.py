@@ -1,16 +1,18 @@
 import torch
 from torch import nn
 
+from .separable_conv import SeparableConv2d
+
 
 class MNIST30K(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         # The first convolution uses a 5x5 kernel and has 16 filters
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=2)
+        self.conv1 = SeparableConv2d(1, 16, kernel_size=5, stride=1, padding=2)
         # Then max pooling is applied with a kernel size of 2
         self.pool1 = nn.MaxPool2d(kernel_size=2)
         # The second convolution uses a 5x5 kernel and has 32 filters
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2)
+        self.conv2 = SeparableConv2d(16, 32, kernel_size=5, stride=1, padding=2)
         # Another max pooling is applied with a kernel size of 2
         self.pool2 = nn.MaxPool2d(kernel_size=2)
 
@@ -42,11 +44,11 @@ class MNIST500K(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         # The first convolution uses a 5x5 kernel and has 16 filters
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, stride=1, padding=2)
+        self.conv1 = SeparableConv2d(1, 32, kernel_size=5, stride=1, padding=2)
         # Then max pooling is applied with a kernel size of 2
         self.pool1 = nn.MaxPool2d(kernel_size=2)
         # The second convolution uses a 5x5 kernel and has 32 filters
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2)
+        self.conv2 = SeparableConv2d(32, 64, kernel_size=5, stride=1, padding=2)
         # Another max pooling is applied with a kernel size of 2
         self.pool2 = nn.MaxPool2d(kernel_size=2)
 
@@ -80,12 +82,12 @@ class MNIST3M(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         # The first convolution uses a 5x5 kernel and has 16 filters
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, stride=1, padding=2)
+        self.conv1 = SeparableConv2d(1, 32, kernel_size=5, stride=1, padding=2)
         # self.bn1 = nn.BatchNorm2d(32)  # Batch Norm for conv1
         # Then max pooling is applied with a kernel size of 2
         self.pool1 = nn.MaxPool2d(kernel_size=2)
         # The second convolution uses a 5x5 kernel and has 32 filters
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2)
+        self.conv2 = SeparableConv2d(32, 64, kernel_size=5, stride=1, padding=2)
         # self.bn2 = nn.BatchNorm2d(64)  # Batch Norm for conv2
         # Another max pooling is applied with a kernel size of 2
         self.pool2 = nn.MaxPool2d(kernel_size=2)

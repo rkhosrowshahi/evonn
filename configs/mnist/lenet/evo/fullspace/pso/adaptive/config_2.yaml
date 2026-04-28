@@ -1,0 +1,31 @@
+script: src/evo/evo_trainer.py
+arch: lenet
+dataset: mnist
+num_fe: 2500000
+batch_size: 256
+criterion: ce
+adapter: full
+optimizer: pso
+pso_w: 0.9
+pso_c1: 2.0
+pso_c2: 2.0
+pso_initial_velocity: random
+pso_max_velocity_rate: 0.20
+pso_adaptive: true
+# pso_pertube_best: false
+seed: 111111
+alpha: 1.0
+pop_init: uniform
+pop_init_lb: -0.1
+pop_init_ub: 0.1
+pop_size: 50
+num_iterations: 50000
+l2_reg_wd: 1e-3
+test_interval: 10
+save_path: logs/mnist/lenet/evo/fullspace/pso/adaptive/seed_111111
+wandb_entity: rasa_research
+wandb_project: evonn
+wandb_group: lenet-mnist-fullspace-pso-adaptive
+wandb_name: lenet-mnist-fullspace-pso-adaptive-seed_111111
+disable_wandb: false
+note: LeNet on MNIST with full space PSO with adaptive control parameters

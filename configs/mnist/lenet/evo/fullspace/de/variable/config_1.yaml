@@ -1,0 +1,26 @@
+script: src/evo/evo_trainer.py
+arch: lenet
+dataset: mnist
+num_fe: 2500000
+batch_size: 256
+criterion: ce
+adapter: full
+optimizer: de
+de_control: true
+de_mut_prob: 0.9
+seed: 42
+alpha: 1.0
+pop_init: uniform
+pop_init_lb: -0.1
+pop_init_ub: 0.1
+pop_size: 100
+num_iterations: 50000
+l2_reg_wd: 1e-3
+test_interval: 10
+save_path: logs/mnist/lenet/evo/fullspace
+wandb_entity: rasa_research
+wandb_project: evonn
+wandb_group: lenet-mnist-fullspace-de-variable_parameters
+wandb_name: lenet-mnist-fullspace-de-variable_parameters
+disable_wandb: false
+note: LeNet on MNIST with full space DE with variable DE parameters
