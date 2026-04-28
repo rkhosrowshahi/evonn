@@ -28,5 +28,5 @@ wandb_entity: rasa_research
 wandb_project: evonn
 wandb_group: lenet-mnist-fullspace-pso-fixed-fitness_individual_momentum_ema-beta_0.5_0.9
 wandb_name: lenet-mnist-fullspace-pso-fixed-fitness_individual_momentum_ema-beta_0.5_0.9-seed_42
-disable_wandb: true
+disable_wandb: false
 note: LeNet on MNIST with full space PSO with fixed PSO parameters
