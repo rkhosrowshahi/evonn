@@ -17,24 +17,12 @@ def train_with_sgd(args):
     
     # Initialize wandb with consistent configuration
     if not args.disable_wandb:
-        config = {
-            "model": args.model,
-            "dataset": args.dataset,
-            "epochs": args.epochs,
-            "device": device,
-            "lr": args.lr,
-            "batch_size": args.batch_size,
-            "warm": args.warm,
-            "seed": args.seed,
-            "trainer_type": "sgd"
-        }
+        config = vars(args)
         
-        run_name = args.wandb_name if args.wandb_name else f"{args.model}_{args.dataset}_sgd_ep{args.epochs}"
         init_wandb(
             project_name=args.wandb_project,
-            run_name=run_name,
-            config=config,
-            tags=[args.model, args.dataset, "sgd"]
+            run_name=args.wandb_name,
+            config=config
         )
     set_seed(args.seed)
     train_dataset, val_dataset, test_dataset, num_classes = load_data(args.dataset, validation_split=0.01)
@@ -62,7 +50,14 @@ def train_with_sgd(args):
     # Initialize model
     model = get_model(model_name=args.model, num_classes=num_classes).to(device)
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    if args.optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.wd)
+    elif args.optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    elif args.optimizer == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    else:
+        raise ValueError(f"Invalid optimizer: {args.optimizer}")
     criterion = torch.nn.CrossEntropyLoss()
     # train_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -145,13 +140,16 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="cifar100")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=0.1)
-    parser.add_argument("--warm", type=int, default=0)
+    parser.add_argument("--warmup_epochs", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
-    
+    parser.add_argument("--optimizer", type=str, default="sgd")
+    parser.add_argument("--wd", type=float, default=5e-4)
     # Wandb arguments
-    parser.add_argument('--wandb_project', type=str, default='evo-training', help='Wandb project name')
+    parser.add_argument('--wandb_project', type=str, default='grad-nn', help='Wandb project name')
+    parser.add_argument('--wandb_entity', type=str, default=None, help='Wandb entity (team/user) for experiment tracking')
+    parser.add_argument('--wandb_group', type=str, default=None, help='Wandb group for comparing runs (e.g. sweeps or experiment family)')
     parser.add_argument('--wandb_name', type=str, default=None, help='Wandb run name (auto-generated if None)')
     parser.add_argument('--disable_wandb', action='store_true', help='Disable wandb logging')
     args = parser.parse_args()
