@@ -21,10 +21,10 @@ num_iterations: 50000
 l2_reg_wd: 1e-3
 test_interval: 10
 fitness_ema_beta: 0.9
-save_path: logs/mnist/lenet/evo/fullspace/de/fixed/fitness_weighted_ema-batch_small/beta_0.5_0.9/seed_42
+save_path: logs/mnist/lenet/evo/fullspace/de/fixed/fitness_weighted_ema-batch_small/beta_0.9/seed_42
 wandb_entity: rasa_research
 wandb_project: evonn
-wandb_group: lenet-mnist-fullspace-de-fixed-fitness_weighted_ema-batch_small-beta_0.5_0.9
-wandb_name: lenet-mnist-fullspace-de-fixed-fitness_weighted_ema-batch_small-beta_0.5_0.9-seed_42
+wandb_group: lenet-mnist-fullspace-de-fixed-fitness_weighted_ema-batch_small-beta_0.9
+wandb_name: lenet-mnist-fullspace-de-fixed-fitness_weighted_ema-batch_small-beta_0.9-seed_42
 disable_wandb: false
 note: LeNet on MNIST with full space DE with fixed DE parameters

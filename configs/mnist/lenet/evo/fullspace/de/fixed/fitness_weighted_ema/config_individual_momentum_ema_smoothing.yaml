@@ -1,4 +1,4 @@
-script: src/evo/evo_trainer_individual_momentum_ema.py
+script: src/evo/evo_trainer_individual_momentum_ema_smoothing.py
 arch: lenet
 dataset: mnist
 num_fe: 2500000
@@ -21,10 +21,11 @@ num_iterations: 50000
 l2_reg_wd: 1e-3
 test_interval: 10
 fitness_ema_beta: 0.9
-save_path: logs/mnist/lenet/evo/fullspace/de/fixed/mr_0.5-cr_0.7/bs_256/f_ema-beta_0.9/seed_42
+fitness_smoothing_rho: 0.1
+save_path: logs/mnist/lenet/evo/fullspace/de/fixed/mr_0.5-cr_0.7/bs_256/f_ema_smoothing/beta_0.9/seed_42
 wandb_entity: rasa_research
 wandb_project: evonn
-wandb_group: fullspace-de-mr_0.5-cr_0.7-f_ema-beta_0.9
-wandb_name: fullspace-de-mr_0.5-cr_0.7-f_ema-beta_0.9-seed_42
+wandb_group: fullspace-de-mr_0.5-cr_0.7-f_ema-beta_smoothing_0.9
+wandb_name: fullspace-de-mr_0.5-cr_0.7-f_ema-beta_smoothing_0.9-seed_42
 disable_wandb: false
 note: LeNet on MNIST with full space DE with fixed mutation rate 0.5 and crossover rate 0.7 and fitness ema beta 0.9

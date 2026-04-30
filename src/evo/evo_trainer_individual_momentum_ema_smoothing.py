@@ -354,8 +354,12 @@ def main(args):
             if best_parent_momentum is None:
                 offspring_F[i, 0] = F
             else:
-                offspring_F[i, 0] = best_parent_momentum + (
+                control_variate_F = best_parent_momentum + (
                     F - best_parent_batch_F
+                )
+                offspring_F[i, 0] = (
+                    args.fitness_smoothing_rho * control_variate_F
+                    + (1 - args.fitness_smoothing_rho) * F
                 )
             offspring_l2[i, 0] = l2
             offspring_momentum[i, 0] = offspring_F[i, 0]
@@ -769,6 +773,12 @@ if __name__ == "__main__":
         type=float,
         default=0.0,
         help="Exponential moving average beta for fitness (default: 0.0 = replace new batch fitness fully)",
+    )
+    parser.add_argument(
+        "--fitness_smoothing_rho",
+        type=float,
+        default=0.5,
+        help="Weight for best-parent control-variate offspring estimate; 0.0 uses raw batch fitness, 1.0 uses the unsmoothed control-variate estimate.",
     )
 
     # ============================================================================
